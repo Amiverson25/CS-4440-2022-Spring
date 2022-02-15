@@ -1,5 +1,6 @@
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.Random;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -8,11 +9,14 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
+import javax.annotation.processing.SupportedSourceVersion;
 import javax.crypto.Cipher;
 import javax.crypto.CipherInputStream;
 import javax.crypto.CipherOutputStream;
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
+import javax.sound.midi.SysexMessage;
+import javax.xml.transform.stream.StreamSource;
 
 
 public class CryptUtil {
@@ -128,24 +132,105 @@ public class CryptUtil {
                 .limit(targetStringLength)
                 .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
                 .toString();
+        //System.out.println("RANDOOM: " + generatedString.getBytes()[0]);
         return generatedString.getBytes()[0];
     }
 
     /**
      * Encryption (Bytes)
      *
-     * @param data
-     * @param key
+     * @param data : the data in bytes
+     * @param key : the key in bytes
      * @return encrypted bytes
      */
-    public static byte[] cs4440Encrypt(byte[] data, Byte key) {
+    static int[][] sequence = {
+            {3, 4, 2, 0, 6, 7, 1, 5},
+            {7,5,6,2,3,0,1,4},
+            {7,0,4,2,1,3,5,6},
+            {2,0,1,5,4,3,7,6},
+            {0,4,6,1,7,5,2,3},
+            {1,7,0,3,4,2,5,6},
+            {2,7,7,6,1,5,3,0},
+            {7,2,3,1,1,5,3,4}
+    };
+    public static byte[] premutation(byte[] data , int p) {
+        byte[] returnData = new byte[8];
+        for(int i = 0; i < 8; i++){
+            returnData[i] = data[sequence[p][i]];
+        }
+        return returnData;
+    }
+    public static Byte keyPermutation(Byte key) {
+
+        String data3 = String.format("%8s",Integer.toBinaryString(key &  0xFF)).replace(" ", "0");
+
+        String data2 = "";
+
+        for(int i = 0; i < 8; i++){
+            data2= data2 + data3.charAt(sequence[4][i]);
+        }
+
+        int asAInt = Integer.parseInt(data2,2);
+        String dataAsInt = Integer.toString(asAInt+256);
+        //System.out.println("KEY: " + key + "AFTER: " + dataAsInt);
+        return data2.getBytes()[0];
+    }
+    public static byte[] unpremutation(byte[] data) {
+        byte[] returnData = new byte[8];
+        for(int i = 0; i < 8; i++){
+            returnData[sequence[0][i]] = data[i];
+        }
+        return returnData;
+    }
+    public static Byte unkeyPermutation(Byte key) {
+        String data = "00" + Integer.toBinaryString((int) key);
+
+        String data2 = "";
+        char[] returnData = new char[8];
+        for(int i = 0; i < 8; i++){
+            returnData[sequence[0][i]] = data.charAt(i);
+        }
+        for(int i = 0; i < 8; i++){
+            data2 += returnData[i];
+        }
+
+        return data2.getBytes()[0];
+    }
+
+   /* public static byte[] cs4440Encrypt(byte[] data, Byte key) {
         // TODO
-	byte[] cipherdata = new byte[8];
-	
-	//Your code here
+	byte[] cipherdata = new byte[data.length];
+    Byte current = keyPermutation(key);
+    data = premutation(data);
+
+    for(int i = 0; i < data.length; i++){
+        current = (byte) (data[i] ^ current);
+        cipherdata[i] = current;
+    }
 
 	return cipherdata;
-    }
+    }*/
+   public static byte[] cs4440Encrypt(byte[] data, Byte key) {
+       byte[] ciphertext = new byte[8];
+       String data2 = "423";
+       String data4 = "23d23";
+       //System.out.println("BEFORE:" + key);
+       key = keyPermutation(key);
+       //System.out.println("AFTER: " + key);
+
+       //data = premutation(data , 0);
+       byte initializationVector = keyPermutation(data2.getBytes()[0]);
+       for(int i = 0; i < 8; i++){
+           if(i == 0){
+               ciphertext[i] = (byte) ((initializationVector ^ ((key*key*key*key))) ^ data[i]);
+           }
+           else{
+               ciphertext[i] = (byte) ((ciphertext[i-1] ^ ((key*key*key*key)))^ data[i]);
+           }
+       }
+
+       return ciphertext;
+   }
 
     /**
      * Encryption (file)
@@ -156,7 +241,42 @@ public class CryptUtil {
      */
     public static int encryptDoc(String plainfilepath, String cipherfilepath, Byte key) {
         try {
-            // TODO
+            BufferedReader br = new BufferedReader(new FileReader(plainfilepath));
+            StringBuilder sb = new StringBuilder();
+            String line = br.readLine();
+
+            while (line != null) {
+                sb.append(line);
+                sb.append(System.lineSeparator());
+                line = br.readLine();
+            }
+            String everything = sb.toString();
+            br.close();
+
+            PrintWriter writer = new PrintWriter(cipherfilepath, "UTF-8");
+
+            String everything2 = "";
+            int currentPlaceInString = 0;
+            while(currentPlaceInString < everything.length()){
+                byte[] toEncrypt = new byte[8];
+                for(int j = 0; j < 8; j++){
+                    String test = "";
+                    test += everything.charAt(currentPlaceInString);
+                    toEncrypt [j] = test.getBytes()[0];
+                    currentPlaceInString++;
+                }
+                //for(int q = 0; q < 2; q++) {
+                    for (int p = 0; p < 7; p++) {
+                        toEncrypt = premutation(toEncrypt, p);
+                        toEncrypt = cs4440Encrypt(toEncrypt, key);
+
+                    }
+                //}
+                for(int i = 0; i < 8; i++){
+                    writer.print((char)toEncrypt[i]);
+                }
+            }
+
             return 0;
 
         } catch (Exception e) {
@@ -173,15 +293,43 @@ public class CryptUtil {
      */
 
     public static byte[] cs4440Decrypt(byte[] data, Byte key) {
+        byte[] plaintext = new byte[8];
+        String data2 = "423";
+        key = keyPermutation(key);
+
+        byte initializationVector = keyPermutation(data2.getBytes()[0]);
+        for(int i = 0; i < 8; i++){
+            if(i == 0){
+                plaintext[i] = (byte) (  (data[i]) ^ (initializationVector ^ (key*key*key*key)));
+            }
+            else{
+                plaintext[i] = (byte) ( (data[i]) ^ (data[i-1] ^ (key*key*key*key)));
+            }
+        }
+        return plaintext;
+    }
+
+   /* public static byte[] cs4440Decrypt(byte[] data, Byte key) {
         // TODO
-	byte[] plaindata = new byte[8];
-	
+        byte[] cipherdata = new byte[data.length];
+        Byte current = key;
+        current = unkeyPermutation(key);
+        byte[] cipherdata = new byte[data.length];
+        byte initializationVector = data2.getBytes()[0];
+        //data = premutation(data);
+        for(int i = 0; i < data.length; i++){
+            cipherdata[i] = (byte) (data[i] ^ current);
+            current = data[i];
+        }
+        cipherdata = unpremutation(cipherdata);
+
+
 	//Your code here
 
-	return plaindata;
+	return cipherdata;
 
         //return 0;
-    }
+    }*/
 
     /**
      * Decryption (file)
@@ -199,11 +347,13 @@ public class CryptUtil {
         String targetFilepath = "";
         String encFilepath = "";
         String decFilepath = "";
+        System.out.println(args[0].toString());
         if (args.length == 3) {
             try {
                 File file1 = new File(args[0].toString());
                 if (file1.exists() && !file1.isDirectory()) {
                     targetFilepath = args[0].toString();
+                    System.out.println("success");
                 } else {
                     System.out.println("File does not exist!");
                     System.exit(1);
@@ -268,3 +418,4 @@ public class CryptUtil {
     }
 
 }
+
